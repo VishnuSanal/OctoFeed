@@ -1,12 +1,24 @@
 # Octo Feed
 
-A Next.js application with GitHub authentication integration.
+A Next.js application that displays your GitHub activity feed with GitHub OAuth authentication.
 
 ## Features
 
-- GitHub OAuth authentication using NextAuth.js
-- Modern responsive design with Tailwind CSS
-- App Router architecture (Next.js 13+)
+- **GitHub OAuth Authentication** - Secure login using NextAuth.js
+- **Activity Feed** - View events from `https://api.github.com/users/<username>/received_events`
+- **Real-time Updates** - Refresh your feed with a single click
+- **Event Types Supported**:
+  - 📝 Push Events (commits)
+  - 🔀 Pull Requests
+  - 📋 Issues
+  - 💬 Comments
+  - ⭐ Stars
+  - 🍴 Forks
+  - ✨ Repository Creation
+  - 🚀 Releases
+  - And more!
+- **Modern UI** - Responsive design with Tailwind CSS
+- **Dark Mode** - Automatic dark mode support
 
 ## Setup
 
@@ -57,10 +69,21 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 ## Usage
 
-- Visit the homepage to see the login interface
-- Click "Sign in with GitHub" to authenticate
-- After authentication, you'll see your GitHub profile information
-- Click "Sign out" to log out
+1. **Sign In** - Click "Sign in with GitHub" on the homepage
+2. **Authorize** - Grant permissions to the OctoFeed app
+3. **View Feed** - Your GitHub activity feed will load automatically
+4. **Refresh** - Click the refresh button to get the latest events
+5. **Sign Out** - Click "Sign out" in the header when done
+
+### What You'll See
+
+The feed displays events from your GitHub network, including:
+- Recent commits from repositories you follow
+- Pull requests opened or merged
+- Issues created or updated
+- Stars and forks
+- New repository creations
+- And other activities from people you follow
 
 ## Project Structure
 
@@ -69,10 +92,11 @@ src/
 ├── app/
 │   ├── api/auth/[...nextauth]/route.js  # NextAuth.js API routes
 │   ├── layout.js                        # Root layout with AuthProvider
-│   └── page.js                         # Main page with login interface
+│   └── page.js                         # Main page with feed and login
 ├── components/
 │   ├── AuthProvider.js                 # Session provider wrapper
-│   └── LoginButton.js                  # Login/logout component
+│   ├── LoginButton.js                  # Login/logout component
+│   └── GitHubFeed.js                   # GitHub activity feed component
 ```
 
 ## Technologies Used

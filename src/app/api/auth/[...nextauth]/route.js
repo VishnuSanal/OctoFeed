@@ -10,14 +10,18 @@ const handler = NextAuth({
   ],
   callbacks: {
     async session({ session, token }) {
-      // Add additional user info to the session if needed
+      // Add additional user info to the session
       session.user.id = token.sub
+      session.user.login = token.login // GitHub username
       return session
     },
     async jwt({ token, account, profile }) {
-      // Add additional info to the JWT token if needed
+      // Add additional info to the JWT token
       if (account) {
         token.accessToken = account.access_token
+      }
+      if (profile) {
+        token.login = profile.login // GitHub username
       }
       return token
     }
