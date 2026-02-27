@@ -7,6 +7,8 @@ import ActivityFilter from "./ActivityFilter";
 import NotificationBanner from "./NotificationBanner";
 import LoadingSkeleton from "./LoadingSkeleton";
 
+const EVENTS_PER_PAGE = 100;
+
 export default function GitHubFeed() {
   const { data: session } = useSession();
   const [events, setEvents] = useState([]);
@@ -15,6 +17,8 @@ export default function GitHubFeed() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [notification, setNotification] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [fetchingPage, setFetchingPage] = useState(null); // e.g. "2/3"
 
   const username = session?.user?.login || session?.user?.name;
 
@@ -30,6 +34,7 @@ export default function GitHubFeed() {
     } else {
       setFilteredEvents(events.filter((event) => event.type === activeFilter));
     }
+    setCurrentPage(1);
   }, [events, activeFilter]);
 
   const handleFilter = (filterType) => {
@@ -40,31 +45,47 @@ export default function GitHubFeed() {
     try {
       setLoading(true);
       setError(null);
+      setFetchingPage(null);
 
       if (!username) {
         throw new Error("Unable to determine GitHub username");
       }
 
-      const response = await fetch(
-        `https://api.github.com/users/${username}/received_events?per_page=100`,
-      );
+      const allEvents = [];
+      const perPage = 100;
+      // GitHub Events API caps at 300 events (3 pages × 100)
+      for (let page = 1; page <= 3; page++) {
+        setFetchingPage(`${page}/3`);
+        const response = await fetch(
+          `https://api.github.com/users/${username}/received_events?per_page=${perPage}&page=${page}`
+        );
 
-      if (!response.ok) {
-        if (response.status === 404) {
-          throw new Error(`GitHub user '${username}' not found`);
+        if (!response.ok) {
+          if (response.status === 404) {
+            throw new Error(`GitHub user '${username}' not found`);
+          }
+          if (page === 1) {
+            throw new Error(`Failed to fetch events (${response.status})`);
+          }
+          break; // non-fatal for subsequent pages
         }
-        throw new Error(`Failed to fetch events (${response.status})`);
+
+        const data = await response.json();
+        if (data.length === 0) break;
+        allEvents.push(...data);
+        if (data.length < perPage) break; // reached last page
       }
 
-      const data = await response.json();
-      setEvents(data);
+      setFetchingPage(null);
+      setEvents(allEvents);
+      setCurrentPage(1);
 
-      // Show success notification
       setNotification({
-        message: `Loaded ${data.length} recent activities`,
+        message: `Loaded ${allEvents.length} recent activities`,
         type: "success",
       });
     } catch (err) {
+      setFetchingPage(null);
       setError(err.message);
       setNotification({
         message: `Failed to load activities: ${err.message}`,
@@ -229,6 +250,11 @@ export default function GitHubFeed() {
             onDismiss={() => setNotification(null)}
           />
         )}
+        {fetchingPage && (
+          <p className="text-center text-sm text-gray-500 dark:text-gray-400 mb-2">
+            Fetching page {fetchingPage}…
+          </p>
+        )}
         <LoadingSkeleton />
       </>
     );
@@ -263,6 +289,26 @@ export default function GitHubFeed() {
     return acc;
   }, {});
 
+  const totalPages = Math.max(1, Math.ceil(filteredEvents.length / EVENTS_PER_PAGE));
+  const paginatedEvents = filteredEvents.slice(
+    (currentPage - 1) * EVENTS_PER_PAGE,
+    currentPage * EVENTS_PER_PAGE
+  );
+
+  // Build page number list with ellipsis
+  const getPageNumbers = () => {
+    if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1);
+    const pages = [];
+    if (currentPage <= 4) {
+      pages.push(1, 2, 3, 4, 5, "…", totalPages);
+    } else if (currentPage >= totalPages - 3) {
+      pages.push(1, "…", totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages);
+    } else {
+      pages.push(1, "…", currentPage - 1, currentPage, currentPage + 1, "…", totalPages);
+    }
+    return pages;
+  };
+
   return (
     <>
       {/* Notification Banner */}
@@ -287,6 +333,11 @@ export default function GitHubFeed() {
                 {activeFilter === "all"
                   ? "recent activities"
                   : `${activeFilter.replace("Event", "").toLowerCase()} events`}
+                {totalPages > 1 && (
+                  <span className="ml-2 text-gray-400 dark:text-gray-500">
+                    — page {currentPage} of {totalPages}
+                  </span>
+                )}
               </p>
             </div>
             <button
@@ -347,8 +398,9 @@ export default function GitHubFeed() {
             </p>
           </div>
         ) : (
+          <>
           <div className="space-y-4">
-            {filteredEvents.map((event, index) => (
+            {paginatedEvents.map((event, index) => (
               <div
                 key={event.id}
                 className="group bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-5 hover:shadow-md hover:border-purple-300 dark:hover:border-purple-700 transition-all duration-200 transform hover:-translate-y-1 animate-fadeInUp"
@@ -443,6 +495,56 @@ export default function GitHubFeed() {
               </div>
             ))}
           </div>
+
+          {/* Pagination Controls */}
+          {totalPages > 1 && (
+            <div className="mt-8 flex flex-col items-center gap-3">
+              <div className="flex items-center gap-1 flex-wrap justify-center">
+                {/* Previous */}
+                <button
+                  onClick={() => { setCurrentPage(p => Math.max(1, p - 1)); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                  disabled={currentPage === 1}
+                  className="px-3 py-2 rounded-lg text-sm font-medium border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  ← Prev
+                </button>
+
+                {/* Page numbers */}
+                {getPageNumbers().map((p, i) =>
+                  p === "…" ? (
+                    <span key={`ellipsis-${i}`} className="px-2 py-2 text-gray-400 dark:text-gray-500 text-sm select-none">…</span>
+                  ) : (
+                    <button
+                      key={p}
+                      onClick={() => { setCurrentPage(p); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                      className={`w-9 h-9 rounded-lg text-sm font-medium border transition-colors ${
+                        currentPage === p
+                          ? "bg-purple-500 dark:bg-purple-600 text-white border-purple-500 dark:border-purple-600 shadow-md"
+                          : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-purple-50 dark:hover:bg-purple-900/20 hover:border-purple-300"
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  )
+                )}
+
+                {/* Next */}
+                <button
+                  onClick={() => { setCurrentPage(p => Math.min(totalPages, p + 1)); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                  disabled={currentPage === totalPages}
+                  className="px-3 py-2 rounded-lg text-sm font-medium border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                  Next →
+                </button>
+              </div>
+
+              {/* Item range summary */}
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Showing {(currentPage - 1) * EVENTS_PER_PAGE + 1}–{Math.min(currentPage * EVENTS_PER_PAGE, filteredEvents.length)} of {filteredEvents.length} events
+              </p>
+            </div>
+          )}
+          </>
         )}
       </div>
     </>
