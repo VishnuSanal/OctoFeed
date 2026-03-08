@@ -2,31 +2,71 @@ import { getToken } from "next-auth/jwt";
 
 const GITHUB_API = "https://api.github.com";
 
-async function githubFetch(url, token) {
-  const res = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github.v3+json",
-    },
-  });
-  if (!res.ok) return null;
-  return res.json();
+// --- Rate-limit-aware fetch ------------------------------------------------
+
+async function githubFetch(url, token, accept = "application/vnd.github.v3+json") {
+  const maxRetries = 3;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: accept,
+      },
+    });
+
+    // Secondary rate limit (abuse detection)
+    if (res.status === 403) {
+      const body = await res.text();
+      if (body.includes("abuse") || body.includes("secondary")) {
+        const wait = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s
+        await sleep(wait);
+        continue;
+      }
+    }
+
+    // Primary rate limit exhausted
+    const remaining = res.headers.get("X-RateLimit-Remaining");
+    if (remaining === "0") {
+      const resetEpoch = Number(res.headers.get("X-RateLimit-Reset"));
+      const waitMs = Math.max(0, resetEpoch * 1000 - Date.now()) + 1000;
+      await sleep(waitMs);
+      continue;
+    }
+
+    if (!res.ok) return { data: null, res };
+    const data = await res.json();
+    return { data, res };
+  }
+  return { data: null, res: null };
 }
 
-async function fetchAllPages(baseUrl, token, maxPages = 3) {
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// --- Pagination following Link headers -------------------------------------
+
+function getNextUrl(response) {
+  const link = response?.headers?.get("Link");
+  if (!link) return null;
+  const match = link.match(/<([^>]+)>;\s*rel="next"/);
+  return match ? match[1] : null;
+}
+
+async function fetchAllPages(baseUrl, token, accept) {
   const all = [];
-  for (let page = 1; page <= maxPages; page++) {
-    const sep = baseUrl.includes("?") ? "&" : "?";
-    const data = await githubFetch(
-      `${baseUrl}${sep}per_page=100&page=${page}`,
-      token
-    );
-    if (!data || data.length === 0) break;
+  let url = baseUrl.includes("per_page") ? baseUrl : `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}per_page=100`;
+
+  while (url) {
+    const { data, res } = await githubFetch(url, token, accept);
+    if (!data || !Array.isArray(data) || data.length === 0) break;
     all.push(...data);
-    if (data.length < 100) break;
+    url = getNextUrl(res);
   }
   return all;
 }
+
+// --- Main handler ----------------------------------------------------------
 
 export async function GET(request) {
   const jwt = await getToken({ req: request });
@@ -38,144 +78,139 @@ export async function GET(request) {
   const token = jwt.accessToken;
 
   try {
-    // 1. Fetch received_events (activity from people you follow) and user's repos in parallel
-    const [receivedEvents, repos, followers] = await Promise.all([
+    // --- Parallel: received_events, user repos, following list -------------
+    const [receivedEvents, repos, following] = await Promise.all([
       fetchAllPages(`${GITHUB_API}/users/${username}/received_events`, token),
-      githubFetch(
-        `${GITHUB_API}/user/repos?sort=pushed&per_page=30&affiliation=owner`,
-        token
-      ),
-      githubFetch(
-        `${GITHUB_API}/users/${username}/followers?per_page=50`,
-        token
-      ),
+      fetchAllPages(`${GITHUB_API}/user/repos?type=owner`, token),
+      fetchAllPages(`${GITHUB_API}/users/${username}/following`, token),
     ]);
 
-    // 2. Fetch events for top repos to find stars/forks on YOUR repos
-    const topRepos = (repos || []).slice(0, 15);
-    const repoEventResults = await Promise.all(
-      topRepos.map((repo) =>
-        githubFetch(
-          `${GITHUB_API}/repos/${repo.full_name}/events?per_page=100`,
-          token
-        )
-      )
-    );
+    const events = []; // normalized events
+    const seenIds = new Set();
 
-    const classicEvents = [];
+    function addEvent(ev) {
+      if (seenIds.has(ev.id)) return;
+      seenIds.add(ev.id);
+      events.push(ev);
+    }
 
-    // Process received_events — activity from people you follow
-    for (const event of receivedEvents) {
-      if (event.type === "WatchEvent") {
-        classicEvents.push({
-          id: event.id,
-          classicType: "follow_star",
-          icon: "star",
-          title: `${event.actor.login} starred ${event.repo.name.split("/")[1]}`,
-          subtitle: event.repo.name,
-          actor: { login: event.actor.login, avatar_url: event.actor.avatar_url },
-          link: `https://github.com/${event.repo.name}`,
-          created_at: event.created_at,
-        });
-      } else if (event.type === "ForkEvent") {
-        classicEvents.push({
-          id: event.id,
-          classicType: "follow_fork",
-          icon: "fork",
-          title: `${event.actor.login} forked ${event.repo.name.split("/")[1]}`,
-          subtitle: event.repo.name,
-          actor: { login: event.actor.login, avatar_url: event.actor.avatar_url },
-          link: event.payload?.forkee?.html_url || `https://github.com/${event.repo.name}`,
-          created_at: event.created_at,
-        });
-      } else if (
-        event.type === "CreateEvent" &&
-        event.payload?.ref_type === "repository"
-      ) {
-        classicEvents.push({
-          id: event.id,
-          classicType: "follow_create",
-          icon: "repo",
-          title: `${event.actor.login} created a new repository`,
-          subtitle: event.repo.name,
-          actor: { login: event.actor.login, avatar_url: event.actor.avatar_url },
-          link: `https://github.com/${event.repo.name}`,
-          created_at: event.created_at,
-        });
-      } else if (event.type === "ReleaseEvent") {
-        const tag = event.payload?.release?.tag_name || "a release";
-        classicEvents.push({
-          id: event.id,
-          classicType: "follow_release",
-          icon: "release",
-          title: `${event.actor.login} released ${tag} of ${event.repo.name.split("/")[1]}`,
-          subtitle: event.repo.name,
-          actor: { login: event.actor.login, avatar_url: event.actor.avatar_url },
-          link: event.payload?.release?.html_url || `https://github.com/${event.repo.name}`,
-          created_at: event.created_at,
+    // --- A1: Someone followed the authenticated user -----------------------
+    for (const ev of receivedEvents) {
+      if (ev.type === "FollowEvent") {
+        addEvent({
+          id: ev.id,
+          type: "follow",
+          actor: ev.actor.login,
+          actor_avatar: ev.actor.avatar_url,
+          repo: null,
+          created_at: ev.created_at,
+          source: "self",
         });
       }
     }
 
-    // Process repo events — stars and forks on YOUR repos by others
-    const seenIds = new Set(classicEvents.map((e) => e.id));
-    for (const events of repoEventResults) {
-      if (!events) continue;
-      for (const event of events) {
-        if (seenIds.has(event.id)) continue;
-        if (event.actor.login === username) continue; // skip own activity
-
-        if (event.type === "WatchEvent") {
-          seenIds.add(event.id);
-          classicEvents.push({
-            id: event.id,
-            classicType: "repo_star",
-            icon: "star",
-            title: `${event.actor.login} starred your repository ${event.repo.name.split("/")[1]}`,
-            subtitle: event.repo.name,
-            actor: { login: event.actor.login, avatar_url: event.actor.avatar_url },
-            link: `https://github.com/${event.repo.name}`,
-            created_at: event.created_at,
-          });
-        } else if (event.type === "ForkEvent") {
-          seenIds.add(event.id);
-          classicEvents.push({
-            id: event.id,
-            classicType: "repo_fork",
-            icon: "fork",
-            title: `${event.actor.login} forked your repository ${event.repo.name.split("/")[1]}`,
-            subtitle: event.repo.name,
-            actor: { login: event.actor.login, avatar_url: event.actor.avatar_url },
-            link: event.payload?.forkee?.html_url || `https://github.com/${event.repo.name}`,
-            created_at: event.created_at,
+    // --- A2: Someone starred your repos (stargazers with timestamps) -------
+    // Fetch stargazers for each repo in parallel (batched to limit concurrency)
+    const STARGAZER_BATCH = 10;
+    for (let i = 0; i < repos.length; i += STARGAZER_BATCH) {
+      const batch = repos.slice(i, i + STARGAZER_BATCH);
+      const results = await Promise.all(
+        batch.map((repo) =>
+          fetchAllPages(
+            `${GITHUB_API}/repos/${repo.full_name}/stargazers`,
+            token,
+            "application/vnd.github.v3.star+json"
+          )
+        )
+      );
+      for (let j = 0; j < batch.length; j++) {
+        const repo = batch[j];
+        const stargazers = results[j] || [];
+        for (const sg of stargazers) {
+          if (!sg.user || sg.user.login === username) continue;
+          const id = `star-${repo.full_name}-${sg.user.login}-${sg.starred_at}`;
+          addEvent({
+            id,
+            type: "star",
+            actor: sg.user.login,
+            actor_avatar: sg.user.avatar_url,
+            repo: repo.full_name,
+            created_at: sg.starred_at,
+            source: "self",
           });
         }
       }
     }
 
-    // Process followers — "someone started following you"
-    for (const follower of followers || []) {
-      classicEvents.push({
-        id: `follower-${follower.login}`,
-        classicType: "new_follower",
-        icon: "follow",
-        title: `${follower.login} started following you`,
-        subtitle: null,
-        actor: { login: follower.login, avatar_url: follower.avatar_url },
-        link: `https://github.com/${follower.login}`,
-        created_at: null, // GitHub doesn't provide follow timestamps
-      });
+    // --- B: Events from followed users -------------------------------------
+    const FOLLOWING_BATCH = 10;
+    for (let i = 0; i < following.length; i += FOLLOWING_BATCH) {
+      const batch = following.slice(i, i + FOLLOWING_BATCH);
+      const results = await Promise.all(
+        batch.map((user) =>
+          fetchAllPages(`${GITHUB_API}/users/${user.login}/events`, token)
+        )
+      );
+      for (const userEvents of results) {
+        for (const ev of userEvents || []) {
+          if (ev.type === "CreateEvent" && ev.payload?.ref_type === "repository") {
+            addEvent({
+              id: ev.id,
+              type: "create_repo",
+              actor: ev.actor.login,
+              actor_avatar: ev.actor.avatar_url,
+              repo: ev.repo.name,
+              created_at: ev.created_at,
+              source: "following",
+            });
+          } else if (ev.type === "ForkEvent") {
+            addEvent({
+              id: ev.id,
+              type: "fork_repo",
+              actor: ev.actor.login,
+              actor_avatar: ev.actor.avatar_url,
+              repo: ev.repo.name,
+              created_at: ev.created_at,
+              source: "following",
+              meta: { fork_url: ev.payload?.forkee?.html_url },
+            });
+          } else if (ev.type === "WatchEvent") {
+            addEvent({
+              id: ev.id,
+              type: "star_repo",
+              actor: ev.actor.login,
+              actor_avatar: ev.actor.avatar_url,
+              repo: ev.repo.name,
+              created_at: ev.created_at,
+              source: "following",
+            });
+          } else if (ev.type === "ReleaseEvent") {
+            addEvent({
+              id: ev.id,
+              type: "release",
+              actor: ev.actor.login,
+              actor_avatar: ev.actor.avatar_url,
+              repo: ev.repo.name,
+              created_at: ev.created_at,
+              source: "following",
+              meta: {
+                tag: ev.payload?.release?.tag_name,
+                url: ev.payload?.release?.html_url,
+              },
+            });
+          }
+        }
+      }
     }
 
-    // Sort chronologically (newest first), undated items go to end
-    classicEvents.sort((a, b) => {
-      if (!a.created_at && !b.created_at) return 0;
-      if (!a.created_at) return 1;
-      if (!b.created_at) return -1;
-      return new Date(b.created_at) - new Date(a.created_at);
+    // --- Sort: newest first, stable ----------------------------------------
+    events.sort((a, b) => {
+      const da = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const db = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return db - da;
     });
 
-    return Response.json({ events: classicEvents });
+    return Response.json(events);
   } catch (err) {
     console.error("Classic feed error:", err);
     return Response.json({ error: err.message }, { status: 500 });

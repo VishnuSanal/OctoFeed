@@ -1,15 +1,12 @@
 'use client'
 
 import Image from "next/image";
-import { useState } from "react";
 import { useSession } from 'next-auth/react';
 import LoginButton from "../components/LoginButton";
-import GitHubFeed from "../components/GitHubFeed";
 import ClassicFeed from "../components/ClassicFeed";
 
 export default function Home() {
   const { data: session, status } = useSession();
-  const [feedMode, setFeedMode] = useState("default"); // "default" | "classic"
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-black">
@@ -29,32 +26,6 @@ export default function Home() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Feed Mode Toggle */}
-            {session && (
-              <div className="flex items-center bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5 border border-gray-200 dark:border-gray-700">
-                <button
-                  onClick={() => setFeedMode("default")}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200 ${
-                    feedMode === "default"
-                      ? "bg-white dark:bg-gray-700 text-purple-600 dark:text-purple-400 shadow-sm"
-                      : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
-                  }`}
-                >
-                  All Events
-                </button>
-                <button
-                  onClick={() => setFeedMode("classic")}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200 ${
-                    feedMode === "classic"
-                      ? "bg-white dark:bg-gray-700 text-purple-600 dark:text-purple-400 shadow-sm"
-                      : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
-                  }`}
-                >
-                  Classic
-                </button>
-              </div>
-            )}
-
             {session && (
               <div className="flex items-center gap-4">
                 <div className="hidden sm:flex items-center gap-3 px-3 py-2 bg-gray-50 dark:bg-gray-800 rounded-full">
@@ -99,9 +70,7 @@ export default function Home() {
             </div>
           </div>
         ) : (
-          <div>
-            {feedMode === "classic" ? <ClassicFeed /> : <GitHubFeed />}
-          </div>
+          <ClassicFeed />
         )}
       </main>
     </div>
