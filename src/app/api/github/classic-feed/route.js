@@ -135,6 +135,8 @@ export async function GET(request) {
             actor: sg.user.login,
             actor_avatar: sg.user.avatar_url,
             repo: repo.full_name,
+            repo_description: repo.description || null,
+            repo_language: repo.language || null,
             created_at: sg.starred_at,
             source: "self",
           });
@@ -160,6 +162,8 @@ export async function GET(request) {
               actor: ev.actor.login,
               actor_avatar: ev.actor.avatar_url,
               repo: ev.repo.name,
+              repo_description: ev.payload?.description || null,
+              repo_language: null,
               created_at: ev.created_at,
               source: "following",
             });
@@ -170,6 +174,8 @@ export async function GET(request) {
               actor: ev.actor.login,
               actor_avatar: ev.actor.avatar_url,
               repo: ev.repo.name,
+              repo_description: ev.payload?.forkee?.description || null,
+              repo_language: ev.payload?.forkee?.language || null,
               created_at: ev.created_at,
               source: "following",
               meta: { fork_url: ev.payload?.forkee?.html_url },
@@ -181,6 +187,8 @@ export async function GET(request) {
               actor: ev.actor.login,
               actor_avatar: ev.actor.avatar_url,
               repo: ev.repo.name,
+              repo_description: null,
+              repo_language: null,
               created_at: ev.created_at,
               source: "following",
             });
@@ -191,6 +199,8 @@ export async function GET(request) {
               actor: ev.actor.login,
               actor_avatar: ev.actor.avatar_url,
               repo: ev.repo.name,
+              repo_description: null,
+              repo_language: null,
               created_at: ev.created_at,
               source: "following",
               meta: {
