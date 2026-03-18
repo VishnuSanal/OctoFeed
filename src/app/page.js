@@ -6,67 +6,43 @@ import LoginButton from "../components/LoginButton";
 import ClassicFeed from "../components/ClassicFeed";
 
 export default function Home() {
-  const { data: session, status } = useSession();
+  const { data: session } = useSession();
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-black">
-      {/* Header */}
-      <header className="border-b border-gray-200 dark:border-gray-700 bg-white/90 dark:bg-gray-900/90 backdrop-blur-md sticky top-0 z-50 shadow-sm">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <span className="text-3xl animate-pulse">🐙</span>
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold bg-linear-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent">
-                OctoFeed
-              </h1>
-              <p className="text-xs text-gray-500 dark:text-gray-400">Your GitHub Activity</p>
-            </div>
-          </div>
+    <div className="min-h-screen bg-white dark:bg-gray-900">
+      <header className="border-b border-gray-200 dark:border-gray-700 bg-gray-900 dark:bg-gray-950">
+        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+          <a href="/" className="text-white font-semibold text-lg flex items-center gap-2">
+            <span className="text-2xl">🐙</span>
+            OctoFeed
+          </a>
 
-          <div className="flex items-center gap-3">
-            {session && (
-              <div className="flex items-center gap-4">
-                <div className="hidden sm:flex items-center gap-3 px-3 py-2 bg-gray-50 dark:bg-gray-800 rounded-full">
-                  <div className="relative">
-                    <Image
-                      src={session.user.image}
-                      alt="Profile"
-                      width={32}
-                      height={32}
-                      className="rounded-full ring-2 ring-white dark:ring-gray-700"
-                    />
-                  </div>
-                  <div>
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                      {session.user.name}
-                    </span>
-                  </div>
-                </div>
-                <LoginButton compact />
-              </div>
-            )}
-          </div>
+          {session && (
+            <div className="flex items-center gap-3">
+              <Image
+                src={session.user.image}
+                alt={session.user.name}
+                width={32}
+                height={32}
+                className="rounded-full"
+              />
+              <LoginButton compact />
+            </div>
+          )}
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-5xl mx-auto px-4 py-6">
         {!session ? (
           <div className="flex min-h-[60vh] items-center justify-center">
-            <div className="text-center space-y-10 max-w-2xl mx-auto">
-              <div className="space-y-6">
-                <div className="relative">
-                </div>
-              </div>
-
-              <div className="flex justify-center">
-                <div className="transform hover:scale-105 transition-transform duration-200">
-                  <LoginButton />
-                </div>
-              </div>
-
+            <div className="text-center space-y-6">
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
+                Sign in to view your feed
+              </h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Connect your GitHub account to see activity from people you follow.
+              </p>
+              <LoginButton />
             </div>
           </div>
         ) : (
