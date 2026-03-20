@@ -1,7 +1,7 @@
 "use client";
 
 import { useSession } from "next-auth/react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import LoadingSkeleton from "./LoadingSkeleton";
 
 const EVENTS_PER_PAGE = 50;
@@ -90,6 +90,8 @@ export default function ClassicFeed() {
   const [error, setError] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [repoInfo, setRepoInfo] = useState({});
+  const [starredRepos, setStarredRepos] = useState(new Set());
+  const [starringInProgress, setStarringInProgress] = useState(new Set());
 
   useEffect(() => {
     if (session) fetchFeed();
@@ -105,17 +107,76 @@ export default function ClassicFeed() {
   useEffect(() => {
     if (events.length === 0) return;
     const repos = [...new Set(events.filter((e) => e.repo).map((e) => e.repo))];
-    if (repos.length > 0) {
-      fetch("/api/github/repo-info", {
+    if (repos.length === 0) return;
+
+    // Fetch repo info and starred status in parallel
+    fetch("/api/github/repo-info", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repos }),
+    })
+      .then((r) => r.json())
+      .then((data) => setRepoInfo((prev) => ({ ...prev, ...data })))
+      .catch(() => {});
+
+    fetch("/api/github/star", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "check", repos }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        const starred = new Set();
+        for (const [repo, isStarred] of Object.entries(data)) {
+          if (isStarred) starred.add(repo);
+        }
+        setStarredRepos(starred);
+      })
+      .catch(() => {});
+  }, [events]);
+
+  const toggleStar = useCallback(async (repo) => {
+    if (starringInProgress.has(repo)) return;
+    setStarringInProgress((prev) => new Set(prev).add(repo));
+
+    const isStarred = starredRepos.has(repo);
+    const action = isStarred ? "unstar" : "star";
+
+    try {
+      const res = await fetch("/api/github/star", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repos }),
-      })
-        .then((r) => r.json())
-        .then((data) => setRepoInfo((prev) => ({ ...prev, ...data })))
-        .catch(() => {});
+        body: JSON.stringify({ action, repo }),
+      });
+      if (res.ok) {
+        setStarredRepos((prev) => {
+          const next = new Set(prev);
+          if (isStarred) next.delete(repo);
+          else next.add(repo);
+          return next;
+        });
+        setRepoInfo((prev) => {
+          const info = prev[repo];
+          if (!info) return prev;
+          return {
+            ...prev,
+            [repo]: {
+              ...info,
+              stargazers_count: (info.stargazers_count || 0) + (isStarred ? -1 : 1),
+            },
+          };
+        });
+      }
+    } catch (err) {
+      console.error(`Failed to ${action} ${repo}:`, err);
+    } finally {
+      setStarringInProgress((prev) => {
+        const next = new Set(prev);
+        next.delete(repo);
+        return next;
+      });
     }
-  }, [events]);
+  }, [starredRepos, starringInProgress]);
 
   const fetchFeed = async () => {
     try {
@@ -229,7 +290,7 @@ export default function ClassicFeed() {
                         </a>
 
                         {/* Content */}
-                        <div className="flex-1 min-w-0">
+                        <div className="flex-1">
                           <p className="text-sm text-gray-600 dark:text-gray-300">
                             <a
                               href={`https://github.com/${ev.actor}`}
@@ -243,7 +304,7 @@ export default function ClassicFeed() {
                           </p>
 
                           {desc && (
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate">
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                               {desc}
                             </p>
                           )}
@@ -266,10 +327,28 @@ export default function ClassicFeed() {
                           )}
                         </div>
 
-                        {/* Time */}
-                        <span className="text-xs text-gray-400 dark:text-gray-500 flex-shrink-0 whitespace-nowrap mt-0.5">
-                          {formatDate(ev.created_at)}
-                        </span>
+                        {/* Star + Time */}
+                        <div className="flex items-center gap-2 flex-shrink-0 mt-0.5">
+                          {ev.repo && (
+                            <button
+                              onClick={() => toggleStar(ev.repo)}
+                              disabled={starringInProgress.has(ev.repo)}
+                              className={`p-1 rounded transition-colors ${
+                                starredRepos.has(ev.repo)
+                                  ? "text-yellow-500 hover:text-yellow-600"
+                                  : "text-gray-300 dark:text-gray-600 hover:text-yellow-400"
+                              } ${starringInProgress.has(ev.repo) ? "opacity-50" : ""}`}
+                              title={starredRepos.has(ev.repo) ? "Unstar" : "Star"}
+                            >
+                              <svg className="w-4 h-4" viewBox="0 0 16 16" fill={starredRepos.has(ev.repo) ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1">
+                                <path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.751.751 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z" />
+                              </svg>
+                            </button>
+                          )}
+                          <span className="text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap">
+                            {formatDate(ev.created_at)}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   );
